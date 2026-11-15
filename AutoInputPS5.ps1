@@ -5,23 +5,59 @@
 #   -To PC      switch monitor back to the PC, then put windows back
 #   -To Toggle  whichever of the two applies right now (default)
 #   -To Info    list monitors only, change nothing
+#   -To Detect  wizard: you switch the monitor to the PS5 by hand, it learns the setup
 param(
-    [ValidateSet('PS5', 'PC', 'Toggle', 'Info')] [string]$To = 'Toggle'
+    [ValidateSet('PS5', 'PC', 'Toggle', 'Info', 'Detect')] [string]$To = 'Toggle'
 )
 
+# ---- input names ------------------------------------------------------------
+# Monitors talk in numbered input codes (MCCS VCP 0x60). People talk in port names.
+$InputNames = [ordered]@{
+    'VGA 1' = 1; 'VGA 2' = 2; 'DVI 1' = 3; 'DVI 2' = 4
+    'Composite 1' = 5; 'Composite 2' = 6; 'S-Video 1' = 7; 'S-Video 2' = 8
+    'Component 1' = 12; 'Component 2' = 13; 'Component 3' = 14
+    'DisplayPort 1' = 15; 'DisplayPort 2' = 16; 'HDMI 1' = 17; 'HDMI 2' = 18
+    'USB-C' = 27
+}
+$InputAliases = @{     # extra spellings people use -> canonical name
+    'VGA' = 'VGA 1'; 'DVI' = 'DVI 1'; 'DP' = 'DisplayPort 1'; 'DP1' = 'DisplayPort 1'; 'DP2' = 'DisplayPort 2'
+    'DISPLAYPORT' = 'DisplayPort 1'; 'HDMI' = 'HDMI 1'; 'USBC' = 'USB-C'; 'TYPEC' = 'USB-C'; 'USBC1' = 'USB-C'
+    'THUNDERBOLT' = 'USB-C'; 'COMPONENT' = 'Component 1'; 'COMPOSITE' = 'Composite 1'; 'SVIDEO' = 'S-Video 1'
+}
+function Get-InputCode([object]$value) {
+    if ($value -is [int] -or "$value" -match '^\d+$') { return [int]"$value" }   # learned by -To Detect on unusual monitors
+    $key = ("$value" -replace '[\s_\-]', '').ToUpper()
+    if ($InputAliases.ContainsKey($key)) { $key = ($InputAliases[$key] -replace '[\s_\-]', '').ToUpper() }
+    foreach ($n in $InputNames.Keys) { if (($n -replace '[\s_\-]', '').ToUpper() -eq $key) { return $InputNames[$n] } }
+    throw "Unknown input '$value'. Use one of: $($InputNames.Keys -join ', ') - or run the Detect wizard."
+}
+function Get-InputName([int]$code) {
+    foreach ($n in $InputNames.Keys) { if ($InputNames[$n] -eq $code) { return $n } }
+    return "input #$code"
+}
+
 # ---- settings (override them in settings.json next to this script) ----------
-$SharedMonitor = 0     # monitor index (see -To Info) that the PS5 is plugged into
-$PcInput       = 15    # input code for the PC     (15 = DisplayPort 1)
-$Ps5Input      = 18    # input code for the PS5    (18 = HDMI 2)
+$SharedMonitor = 'main'           # 'main', 'second', or the monitor's number from -To Info
+$PcInput       = 'DisplayPort 1'
+$Ps5Input      = 'HDMI 2'
+$Hotkey        = 'Ctrl+Alt+P'     # only used by HotkeyListener.ps1, kept here so Detect preserves it
 $Settings = Join-Path $PSScriptRoot 'settings.json'
 if (Test-Path $Settings) {
     $cfg = Get-Content -Raw $Settings | ConvertFrom-Json
-    if ($null -ne $cfg.SharedMonitor) { $SharedMonitor = [int]$cfg.SharedMonitor }
-    if ($null -ne $cfg.PcInput)       { $PcInput       = [int]$cfg.PcInput }
-    if ($null -ne $cfg.Ps5Input)      { $Ps5Input      = [int]$cfg.Ps5Input }
+    if ($null -ne $cfg.SharedMonitor) { $SharedMonitor = $cfg.SharedMonitor }
+    if ($null -ne $cfg.PcInput)       { $PcInput       = $cfg.PcInput }
+    if ($null -ne $cfg.Ps5Input)      { $Ps5Input      = $cfg.Ps5Input }
+    if ($null -ne $cfg.Hotkey)        { $Hotkey        = $cfg.Hotkey }
 }
+$ConfigError = $null
+try { $PcCode = Get-InputCode $PcInput; $Ps5Code = Get-InputCode $Ps5Input } catch { $ConfigError = $_.Exception.Message }
 $StateFile = Join-Path $PSScriptRoot 'windows.json'
 $FenceFile = Join-Path $PSScriptRoot 'fence.txt'   # read by HotkeyListener.ps1 to keep the mouse off the PS5 screen
+
+function Save-Settings($shared, $pc, $ps5) {
+    $json = "{`r`n    `"SharedMonitor`": $(ConvertTo-Json $shared),`r`n    `"PcInput`": $(ConvertTo-Json $pc),`r`n    `"Ps5Input`": $(ConvertTo-Json $ps5),`r`n    `"Hotkey`": $(ConvertTo-Json $Hotkey)`r`n}`r`n"
+    [IO.File]::WriteAllText($Settings, $json)
+}
 # -----------------------------------------------------------------------------
 
 Add-Type -TypeDefinition @"
@@ -147,29 +183,83 @@ public static class AutoInputPS5 {
 [AutoInputPS5]::InitDpi()
 $mons = [AutoInputPS5]::Monitors()
 
+function Resolve-Monitor($value) {
+    $v = "$value".Trim().ToLower()
+    if ($v -eq 'main' -or $v -eq 'primary') { for ($i = 0; $i -lt $mons.Count; $i++) { if ($mons[$i].Primary) { return $i } } }
+    if ($v -eq 'second' -or $v -eq 'secondary') { for ($i = 0; $i -lt $mons.Count; $i++) { if (-not $mons[$i].Primary) { return $i } } }
+    if ($v -match '^\d+$' -and [int]$v -ge 1 -and [int]$v -le $mons.Count) { return [int]$v - 1 }
+    return -1
+}
+function Describe-Monitor([int]$i) {
+    $label = if ($mons[$i].Primary) { 'main' } else { 'second' }
+    if ($mons.Count -gt 2 -and -not $mons[$i].Primary) { $label = 'other' }
+    return "monitor $($i + 1) ($label)"
+}
+$SharedIndex = Resolve-Monitor $SharedMonitor
+
 if ($To -eq 'Info') {
-    Write-Host "Settings: SharedMonitor=$SharedMonitor PcInput=$PcInput Ps5Input=$Ps5Input"
+    Write-Host "Settings: PS5 shares '$SharedMonitor', PC on '$PcInput', PS5 on '$Ps5Input', hotkey $Hotkey"
     Write-Host ""
     for ($i = 0; $i -lt $mons.Count; $i++) {
         $m = $mons[$i]; $b = $m.Bounds
         $wins = [AutoInputPS5]::WindowsOn($m)
         $code = [AutoInputPS5]::GetInput($m)
-        $tag = if ($i -eq $SharedMonitor) { '  <- shared with PS5' } else { '' }
-        $ddc = if ($code -lt 0) { 'DDC/CI not responding' } else { "input=$code" }
-        Write-Host ("[{0}] {1}x{2} at ({3},{4}) primary={5} {6} windows={7}{8}" -f $i, ($b.Right - $b.Left), ($b.Bottom - $b.Top), $b.Left, $b.Top, $m.Primary, $ddc, $wins.Count, $tag)
+        $tag = if ($i -eq $SharedIndex) { '  <- shared with PS5' } else { '' }
+        $now = if ($code -lt 0) { 'DDC/CI not responding' } else { "showing $(Get-InputName $code)" }
+        Write-Host ("{0}: {1}x{2}, {3}, {4} window(s){5}" -f (Describe-Monitor $i), ($b.Right - $b.Left), ($b.Bottom - $b.Top), $now, $wins.Count, $tag)
         foreach ($w in $wins) { Write-Host "      - $($w.Title)" }
     }
     exit
 }
 
+if ($To -eq 'Detect') {
+    Write-Host "=== AutoInputPS5 setup wizard ==="
+    Write-Host ""
+    $before = @(); foreach ($m in $mons) { $before += [AutoInputPS5]::GetInput($m) }
+    if (@($before | Where-Object { $_ -ge 0 }).Count -eq 0) {
+        Write-Host "None of your monitors answer DDC/CI. Turn on DDC/CI in the monitor's on-screen menu and run this again."
+        exit 1
+    }
+    Write-Host "1. Make sure the PS5 is ON (not in rest mode)."
+    Write-Host "2. Use the buttons on your monitor to switch it to the PS5."
+    Write-Host ""
+    Write-Host "Waiting up to 2 minutes for a monitor to change input..."
+    $found = -1; $ps5 = -1
+    for ($t = 0; $t -lt 120 -and $found -lt 0; $t++) {
+        Start-Sleep -Seconds 1
+        for ($i = 0; $i -lt $mons.Count; $i++) {
+            $now = [AutoInputPS5]::GetInput($mons[$i])
+            if ($before[$i] -ge 0 -and $now -ge 0 -and $now -ne $before[$i]) { $found = $i; $ps5 = $now; break }
+        }
+    }
+    if ($found -lt 0) { Write-Host "No input change seen. Nothing was saved."; exit 1 }
+    $pc = $before[$found]
+    Start-Sleep -Seconds 2                                   # let the monitor settle, then switch back for you
+    [void][AutoInputPS5]::SetInput($mons[$found], $pc)
+
+    $sharedSetting = if ($mons[$found].Primary) { 'main' } elseif ($mons.Count -eq 2) { 'second' } else { "$($found + 1)" }
+    $pcName = Get-InputName $pc;  $ps5Name = Get-InputName $ps5
+    $pcSave  = if ($pcName  -like 'input #*') { $pc }  else { $pcName }    # unusual monitor: keep the number it reported
+    $ps5Save = if ($ps5Name -like 'input #*') { $ps5 } else { $ps5Name }
+    Save-Settings $sharedSetting $pcSave $ps5Save
+    Write-Host ""
+    Write-Host "Got it! Switched you back to the PC."
+    Write-Host "  PS5 shares: $(Describe-Monitor $found)"
+    Write-Host "  PC input:   $pcName"
+    Write-Host "  PS5 input:  $ps5Name"
+    Write-Host "Saved to $Settings"
+    exit
+}
+
+if ($ConfigError) { Write-Host "settings.json: $ConfigError"; exit 1 }
 if ($mons.Count -lt 2) { Write-Host "Need two monitors."; exit 1 }
-if ($SharedMonitor -ge $mons.Count) { Write-Host "SharedMonitor=$SharedMonitor but only $($mons.Count) monitors found. Fix settings.json."; exit 1 }
-$shared = $mons[$SharedMonitor]
+if ($SharedIndex -lt 0) { Write-Host "SharedMonitor '$SharedMonitor' doesn't match a monitor. Use 'main', 'second' or a number from -To Info."; exit 1 }
+$shared = $mons[$SharedIndex]
 $other  = $mons | Where-Object { $_.HMon -ne $shared.HMon } | Select-Object -First 1
 $dx = $other.Work.Left - $shared.Work.Left
 $dy = $other.Work.Top  - $shared.Work.Top
 
-if ($To -eq 'Toggle') { $To = if ([AutoInputPS5]::GetInput($shared) -eq $Ps5Input) { 'PC' } else { 'PS5' } }
+if ($To -eq 'Toggle') { $To = if ([AutoInputPS5]::GetInput($shared) -eq $Ps5Code) { 'PC' } else { 'PS5' } }
 
 if ($To -eq 'PS5') {
     $wins = [AutoInputPS5]::WindowsOn($shared)
@@ -180,12 +270,12 @@ if ($To -eq 'PS5') {
     [void][AutoInputPS5]::SetCursorPos($cx, $cy)
     $b = $other.Bounds
     Set-Content -Encoding ASCII $FenceFile ("{0},{1},{2},{3}" -f $b.Left, $b.Top, $b.Right, $b.Bottom)
-    [void][AutoInputPS5]::SetInput($shared, $Ps5Input)
+    [void][AutoInputPS5]::SetInput($shared, $Ps5Code)
     Write-Host "Moved $($wins.Count) window(s), switched to PS5."
 }
 else {
     Remove-Item $FenceFile -ErrorAction SilentlyContinue
-    [void][AutoInputPS5]::SetInput($shared, $PcInput)
+    [void][AutoInputPS5]::SetInput($shared, $PcCode)
     $back = 0
     if (Test-Path $StateFile) {
         $saved = Get-Content -Raw $StateFile | ConvertFrom-Json   # assign first: PS 5.1 won't unroll a piped array

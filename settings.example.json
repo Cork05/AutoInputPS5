@@ -1,6 +1,6 @@
 {
-    "SharedMonitor": 0,
-    "PcInput": 15,
-    "Ps5Input": 18,
+    "SharedMonitor": "main",
+    "PcInput": "DisplayPort 1",
+    "Ps5Input": "HDMI 2",
     "Hotkey": "Ctrl+Alt+P"
 }

@@ -26,6 +26,18 @@ if (-not (Test-Path $settings)) {
     Write-Host "Created default settings.json"
 } else {
     Write-Host "Kept your existing settings.json"
+    # v1.0 stored a 0-based monitor index and raw input codes; switch those to names.
+    $cfg = Get-Content -Raw $settings | ConvertFrom-Json
+    if ($cfg.SharedMonitor -is [int]) {
+        $names = @{ 1 = 'VGA 1'; 2 = 'VGA 2'; 3 = 'DVI 1'; 4 = 'DVI 2'; 15 = 'DisplayPort 1'; 16 = 'DisplayPort 2'; 17 = 'HDMI 1'; 18 = 'HDMI 2'; 27 = 'USB-C' }
+        $shared = "$([int]$cfg.SharedMonitor + 1)"
+        $pc  = if ($names.ContainsKey([int]$cfg.PcInput))  { $names[[int]$cfg.PcInput] }  else { [int]$cfg.PcInput }
+        $ps5 = if ($names.ContainsKey([int]$cfg.Ps5Input)) { $names[[int]$cfg.Ps5Input] } else { [int]$cfg.Ps5Input }
+        $hk  = if ($cfg.Hotkey) { $cfg.Hotkey } else { 'Ctrl+Alt+P' }
+        $json = "{`r`n    `"SharedMonitor`": $(ConvertTo-Json $shared),`r`n    `"PcInput`": $(ConvertTo-Json $pc),`r`n    `"Ps5Input`": $(ConvertTo-Json $ps5),`r`n    `"Hotkey`": $(ConvertTo-Json $hk)`r`n}`r`n"
+        [IO.File]::WriteAllText($settings, $json)
+        Write-Host "Upgraded settings.json to the new input names"
+    }
 }
 # Files downloaded from the internet are marked as blocked; clear that.
 Get-ChildItem $dest | Unblock-File
@@ -60,5 +72,12 @@ Write-Host ""
 Write-Host "Your monitors:"
 & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dest 'AutoInputPS5.ps1') -To Info
 Write-Host ""
-Write-Host "Done. If the PS5 isn't on the screen marked '<- shared with PS5', or uses a"
-Write-Host "different input, edit $settings (see README)."
+Write-Host "The wizard learns which monitor and ports you use, so you don't have to edit settings."
+$ans = Read-Host "Run the setup wizard to detect your monitor and inputs automatically? [Y/n]"
+if ($ans -notmatch '^\s*n') {
+    Write-Host ""
+    & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dest 'AutoInputPS5.ps1') -To Detect
+}
+Write-Host ""
+Write-Host "All set. Press Ctrl+Alt+P to switch (or the hotkey in settings.json)."
+Write-Host "Run the wizard again any time: double-click Detect.bat"

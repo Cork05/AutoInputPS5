@@ -69,47 +69,53 @@ git clone https://github.com/Cork05/AutoInputPS5.git
    - copies AutoInputPS5 to `%LOCALAPPDATA%\AutoInputPS5`
    - starts the hotkey listener now, and every time you log in
    - adds an **AutoInputPS5** shortcut to your desktop
-   - lists your monitors so you can check the setup
+   - offers to run the **setup wizard** (say yes, see below)
 4. **Press `Ctrl` + `Alt` + `P`.** 🎮
 
 You can delete the extracted folder afterwards. Everything runs from `%LOCALAPPDATA%\AutoInputPS5`.
 
-### ⚙️ Configure (if needed)
+### 🧙 Setup wizard: no settings to figure out
 
-The defaults are: the PS5 shares your **main** monitor, the PC uses **DisplayPort**, and the PS5 uses **HDMI 2**. If your setup is different, open `%LOCALAPPDATA%\AutoInputPS5\settings.json`:
+The wizard works out your setup by watching what you do:
+
+1. Turn the PS5 on.
+2. When the wizard asks, use the **buttons on your monitor** to switch it to the PS5.
+3. The wizard sees which monitor changed and which input it changed to. It saves that and switches you straight back to the PC.
+
+That's it. It works even on monitors that number their inputs in unusual ways. Run it again any time by double-clicking **`Detect.bat`**, for example if you plug the PS5 into a different port.
+
+### ⚙️ Settings (optional)
+
+Prefer to set it by hand? Open `%LOCALAPPDATA%\AutoInputPS5\settings.json`:
 
 ```json
 {
-    "SharedMonitor": 0,
-    "PcInput": 15,
-    "Ps5Input": 18,
+    "SharedMonitor": "main",
+    "PcInput": "DisplayPort 1",
+    "Ps5Input": "HDMI 2",
     "Hotkey": "Ctrl+Alt+P"
 }
 ```
 
-| Setting | What it is |
+| Setting | What to put |
 |---|---|
-| `SharedMonitor` | Which monitor the PS5 is plugged into. The installer lists them and marks the current choice with `<- shared with PS5`. |
-| `PcInput` | The input code the PC is on. |
-| `Ps5Input` | The input code the PS5 is on. |
+| `SharedMonitor` | The monitor the PS5 is plugged into: `"main"`, `"second"`, or its number (`"1"`, `"2"`, `"3"`...) from the monitor list. |
+| `PcInput` | The port the PC is plugged into, e.g. `"DisplayPort 1"`. |
+| `Ps5Input` | The port the PS5 is plugged into, e.g. `"HDMI 2"`. |
 | `Hotkey` | Any combination of `Ctrl`, `Alt`, `Shift`, `Win` plus a letter, digit or `F1` to `F24`. |
 
-Common input codes:
+Port names you can use, written on the back of the monitor:
 
-| Input | Code |
+| Port | Write it as |
 |---|---|
-| DisplayPort 1 | `15` |
-| DisplayPort 2 | `16` |
-| HDMI 1 | `17` |
-| HDMI 2 | `18` |
+| HDMI | `"HDMI 1"`, `"HDMI 2"` |
+| DisplayPort | `"DisplayPort 1"`, `"DisplayPort 2"` (or `"DP1"`, `"DP2"`) |
+| USB-C / Thunderbolt | `"USB-C"` |
+| Older ports | `"DVI 1"`, `"DVI 2"`, `"VGA 1"`, `"VGA 2"` |
 
-**Not sure of your codes?** Some monitors use their own numbers. To find them, run this in PowerShell while the monitor is showing the PC:
+Spacing and capitals don't matter: `"hdmi2"` works too.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\AutoInputPS5\AutoInputPS5.ps1" -To Info
-```
-
-That's the PC's code. Then switch the monitor to the PS5 with its own buttons and run it again to get the PS5's code.
+**Port names not working, or a port not listed (like HDMI 3)?** Some monitors number their inputs their own way. Run the **setup wizard** (`Detect.bat`) and it'll learn your monitor's numbering for you. In that case `settings.json` may show a plain number, which is fine to leave as is.
 
 After changing the **hotkey**, sign out and back in (or run `Install.bat` again) so the listener picks it up. Other settings take effect immediately.
 
@@ -126,7 +132,8 @@ powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\AutoInputPS5\AutoInp
 | `Toggle` | Whichever applies right now (default) |
 | `PS5` | Move windows away, fence the mouse, switch to the PS5 |
 | `PC` | Switch to the PC, put windows back, free the mouse |
-| `Info` | List monitors, their current input and their windows. Changes nothing |
+| `Info` | List monitors, which port each is showing and their windows. Changes nothing |
+| `Detect` | Run the setup wizard |
 
 Handy if you want to trigger it from a Stream Deck, a macro keyboard or a scheduled task.
 
@@ -137,9 +144,9 @@ Handy if you want to trigger it from a Stream Deck, a macro keyboard or a schedu
 | Problem | Fix |
 |---|---|
 | Hotkey does nothing | Check `%LOCALAPPDATA%\AutoInputPS5\listener.log`. If it says the hotkey couldn't be registered, another app is using it, so pick a different `Hotkey`. |
-| `-To Info` says "DDC/CI not responding" | Turn on **DDC/CI** in the monitor's on-screen menu. Some monitors only answer over DisplayPort or HDMI, not through docks or adapters. |
-| Monitor switches to the wrong input | Your monitor uses different codes. See *Not sure of your codes?* above. |
-| The wrong monitor switches | Change `SharedMonitor` in `settings.json`. |
+| "DDC/CI not responding" | Turn on **DDC/CI** in the monitor's on-screen menu. Some monitors only answer over DisplayPort or HDMI, not through docks or adapters. |
+| Monitor switches to the wrong input | Run the setup wizard (`Detect.bat`). |
+| The wrong monitor switches | Run the setup wizard, or change `SharedMonitor` in `settings.json`. |
 | A window didn't move | Apps running **as administrator** can't be moved by a normal app. Apps hidden in the **system tray** (not the taskbar) aren't moved either. |
 | Mouse feels stuck on one screen | You're in PS5 mode. Press the hotkey to come back to the PC. |
 
