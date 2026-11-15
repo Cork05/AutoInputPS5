@@ -14,6 +14,8 @@ Press **`Ctrl` + `Alt` + `P`**:
 | ➖ **Minimized windows** | Moved too, so they open on the screen you can see | Restored to where they used to open |
 | 🖱️ **Mouse** | Jumps to the other screen and is **fenced in**, so it can't wander onto the PS5 screen | Free to roam both screens again |
 
+**One monitor or several, it just works.** With a single monitor there's nowhere to move windows, so they simply wait behind the PS5 picture. Your mouse is parked safely out of the way, and both come back when you do. See *Single-monitor mode* below.
+
 No capture card, no lag, no extra hardware. The PS5 picture goes straight into the monitor as usual. AutoInputPS5 just tells the monitor which input to show, using the DDC/CI control channel built into almost every modern monitor's cable.
 
 ---
@@ -38,13 +40,26 @@ No capture card, no lag, no extra hardware. The PS5 picture goes straight into t
 ### 🖱️ Mouse fence
 - In PS5 mode your cursor is confined to the screen you can actually see.
 - Windows sometimes drops a mouse fence on its own (focus changes, permission prompts), so the fence is re-applied 10 times a second.
+- When you come back to the PC, the mouse returns to exactly where you left it.
+
+### 🖥️ Single-monitor mode
+Only have one screen? AutoInputPS5 detects that automatically. There's nothing to configure.
+
+| | Going to the PS5 | Coming back to the PC |
+|---|---|---|
+| 🖥️ **Monitor input** | Switches to the PS5 | Switches back to the PC |
+| 🪟 **Your windows** | Stay exactly where they are, waiting behind the PS5 picture | Right where you left them |
+| 🖱️ **Mouse** | **Parked** in a single corner pixel, so a bumped mouse or a cat on the desk can't click anything you can't see | Returned to exactly where it was |
+
+- The hotkey works the same way. Press it from the couch to flip to the PS5, and again to come back.
+- The setup wizard works on one screen too. You'll see the PS5 for a few seconds while it learns your ports, then it switches you back automatically.
 
 ---
 
 ## 📋 Requirements
 
 - Windows 10 or 11
-- **Two monitors**: one shared with the PS5, one that's PC-only (that's where your windows go)
+- **Any number of monitors.** With two or more, windows move to a PC-only screen. With one, single-monitor mode kicks in automatically.
 - **DDC/CI turned on** in the shared monitor's on-screen menu. It's on by default on most monitors.
 - Nothing to install: it uses the PowerShell that comes with Windows. No admin rights needed.
 
@@ -99,7 +114,7 @@ Prefer to set it by hand? Open `%LOCALAPPDATA%\AutoInputPS5\settings.json`:
 
 | Setting | What to put |
 |---|---|
-| `SharedMonitor` | The monitor the PS5 is plugged into: `"main"`, `"second"`, or its number (`"1"`, `"2"`, `"3"`...) from the monitor list. |
+| `SharedMonitor` | The monitor the PS5 is plugged into: `"main"`, `"second"`, or its number (`"1"`, `"2"`, `"3"`...) from the monitor list. Ignored if you only have one monitor. |
 | `PcInput` | The port the PC is plugged into, e.g. `"DisplayPort 1"`. |
 | `Ps5Input` | The port the PS5 is plugged into, e.g. `"HDMI 2"`. |
 | `Hotkey` | Any combination of `Ctrl`, `Alt`, `Shift`, `Win` plus a letter, digit or `F1` to `F24`. |
@@ -148,7 +163,7 @@ Handy if you want to trigger it from a Stream Deck, a macro keyboard or a schedu
 | Monitor switches to the wrong input | Run the setup wizard (`Detect.bat`). |
 | The wrong monitor switches | Run the setup wizard, or change `SharedMonitor` in `settings.json`. |
 | A window didn't move | Apps running **as administrator** can't be moved by a normal app. Apps hidden in the **system tray** (not the taskbar) aren't moved either. |
-| Mouse feels stuck on one screen | You're in PS5 mode. Press the hotkey to come back to the PC. |
+| Mouse feels stuck on one screen, or won't move at all | You're in PS5 mode (on one monitor the mouse is parked in a corner). Press the hotkey to come back to the PC. |
 
 ## 🗑️ Uninstall
 

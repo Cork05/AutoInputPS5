@@ -53,6 +53,7 @@ $ConfigError = $null
 try { $PcCode = Get-InputCode $PcInput; $Ps5Code = Get-InputCode $Ps5Input } catch { $ConfigError = $_.Exception.Message }
 $StateFile = Join-Path $PSScriptRoot 'windows.json'
 $FenceFile = Join-Path $PSScriptRoot 'fence.txt'   # read by HotkeyListener.ps1 to keep the mouse off the PS5 screen
+$MouseFile = Join-Path $PSScriptRoot 'mouse.txt'   # where the mouse was before switching to the PS5
 
 function Save-Settings($shared, $pc, $ps5) {
     $json = "{`r`n    `"SharedMonitor`": $(ConvertTo-Json $shared),`r`n    `"PcInput`": $(ConvertTo-Json $pc),`r`n    `"Ps5Input`": $(ConvertTo-Json $ps5),`r`n    `"Hotkey`": $(ConvertTo-Json $Hotkey)`r`n}`r`n"
@@ -92,6 +93,7 @@ public static class AutoInputPS5 {
     [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT wp);
     [DllImport("user32.dll")] static extern bool SetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT wp);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int cmd);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out int val, int size);
     [DllImport("dxva2.dll")] static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr h, out uint n);
@@ -196,6 +198,7 @@ function Describe-Monitor([int]$i) {
     return "monitor $($i + 1) ($label)"
 }
 $SharedIndex = Resolve-Monitor $SharedMonitor
+if ($mons.Count -eq 1) { $SharedIndex = 0 }   # single monitor: it's always the shared one
 
 if ($To -eq 'Info') {
     Write-Host "Settings: PS5 shares '$SharedMonitor', PC on '$PcInput', PS5 on '$Ps5Input', hotkey $Hotkey"
@@ -223,6 +226,11 @@ if ($To -eq 'Detect') {
     Write-Host "1. Make sure the PS5 is ON (not in rest mode)."
     Write-Host "2. Use the buttons on your monitor to switch it to the PS5."
     Write-Host ""
+    if ($mons.Count -eq 1) {
+        Write-Host "   Single monitor: you'll see the PS5 for a few seconds, then AutoInputPS5"
+        Write-Host "   switches you back here automatically. No need to touch anything else."
+        Write-Host ""
+    }
     Write-Host "Waiting up to 2 minutes for a monitor to change input..."
     $found = -1; $ps5 = -1
     for ($t = 0; $t -lt 120 -and $found -lt 0; $t++) {
@@ -252,26 +260,36 @@ if ($To -eq 'Detect') {
 }
 
 if ($ConfigError) { Write-Host "settings.json: $ConfigError"; exit 1 }
-if ($mons.Count -lt 2) { Write-Host "Need two monitors."; exit 1 }
 if ($SharedIndex -lt 0) { Write-Host "SharedMonitor '$SharedMonitor' doesn't match a monitor. Use 'main', 'second' or a number from -To Info."; exit 1 }
 $shared = $mons[$SharedIndex]
-$other  = $mons | Where-Object { $_.HMon -ne $shared.HMon } | Select-Object -First 1
-$dx = $other.Work.Left - $shared.Work.Left
-$dy = $other.Work.Top  - $shared.Work.Top
+$other  = $mons | Where-Object { $_.HMon -ne $shared.HMon } | Select-Object -First 1   # $null on a single-monitor setup
 
 if ($To -eq 'Toggle') { $To = if ([AutoInputPS5]::GetInput($shared) -eq $Ps5Code) { 'PC' } else { 'PS5' } }
 
 if ($To -eq 'PS5') {
-    $wins = [AutoInputPS5]::WindowsOn($shared)
-    New-Item -ItemType Directory -Force (Split-Path $StateFile) | Out-Null
-    ConvertTo-Json -InputObject @($wins) -Depth 3 | Set-Content -Encoding UTF8 $StateFile
-    foreach ($w in $wins) { [void][AutoInputPS5]::Place($w, $dx, $dy) }
-    $cx = [int](($other.Work.Left + $other.Work.Right) / 2); $cy = [int](($other.Work.Top + $other.Work.Bottom) / 2)
-    [void][AutoInputPS5]::SetCursorPos($cx, $cy)
-    $b = $other.Bounds
-    Set-Content -Encoding ASCII $FenceFile ("{0},{1},{2},{3}" -f $b.Left, $b.Top, $b.Right, $b.Bottom)
+    $p = New-Object AutoInputPS5+POINT; [void][AutoInputPS5]::GetCursorPos([ref]$p)
+    Set-Content -Encoding ASCII $MouseFile "$($p.X),$($p.Y)"
+    if ($other) {
+        # Two+ monitors: slide this screen's windows onto the other one and fence the mouse there.
+        $dx = $other.Work.Left - $shared.Work.Left
+        $dy = $other.Work.Top  - $shared.Work.Top
+        $wins = [AutoInputPS5]::WindowsOn($shared)
+        ConvertTo-Json -InputObject @($wins) -Depth 3 | Set-Content -Encoding UTF8 $StateFile
+        foreach ($w in $wins) { [void][AutoInputPS5]::Place($w, $dx, $dy) }
+        [void][AutoInputPS5]::SetCursorPos([int](($other.Work.Left + $other.Work.Right) / 2), [int](($other.Work.Top + $other.Work.Bottom) / 2))
+        $b = $other.Bounds
+        Set-Content -Encoding ASCII $FenceFile ("{0},{1},{2},{3}" -f $b.Left, $b.Top, $b.Right, $b.Bottom)
+        $done = "Moved $($wins.Count) window(s) to the other screen"
+    } else {
+        # Single monitor: windows stay put (they're just behind the PS5 picture). Park the mouse in
+        # the bottom-right corner pixel so a bumped mouse can't click anything you can't see.
+        $b = $shared.Bounds
+        [void][AutoInputPS5]::SetCursorPos($b.Right - 1, $b.Bottom - 1)
+        Set-Content -Encoding ASCII $FenceFile ("{0},{1},{2},{3}" -f ($b.Right - 1), ($b.Bottom - 1), $b.Right, $b.Bottom)
+        $done = "Parked the mouse"
+    }
     [void][AutoInputPS5]::SetInput($shared, $Ps5Code)
-    Write-Host "Moved $($wins.Count) window(s), switched to PS5."
+    Write-Host "$done, switched to PS5."
 }
 else {
     Remove-Item $FenceFile -ErrorAction SilentlyContinue
@@ -285,6 +303,13 @@ else {
             if ([AutoInputPS5]::Place($w, 0, 0)) { $back++ }
         }
         Remove-Item $StateFile
+    }
+    if (Test-Path $MouseFile) {
+        # Give the listener a moment to drop the fence, then put the mouse back where it was.
+        Start-Sleep -Milliseconds 250
+        $xy = (Get-Content $MouseFile).Split(',')
+        [void][AutoInputPS5]::SetCursorPos([int]$xy[0], [int]$xy[1])
+        Remove-Item $MouseFile
     }
     Write-Host "Switched to PC, put $back window(s) back."
 }
