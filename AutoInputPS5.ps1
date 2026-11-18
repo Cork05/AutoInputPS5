@@ -185,6 +185,14 @@ public static class AutoInputPS5 {
 [AutoInputPS5]::InitDpi()
 $mons = [AutoInputPS5]::Monitors()
 
+# Self-heal: if the hotkey listener isn't running (killed, crashed, never started), start it again.
+$listenerMutex = $null
+if ([System.Threading.Mutex]::TryOpenExisting('Local\AutoInputPS5Hotkey', [ref]$listenerMutex)) {
+    $listenerMutex.Dispose()
+} else {
+    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $PSScriptRoot 'HotkeyListener.ps1')`""
+}
+
 function Resolve-Monitor($value) {
     $v = "$value".Trim().ToLower()
     if ($v -eq 'main' -or $v -eq 'primary') { for ($i = 0; $i -lt $mons.Count; $i++) { if ($mons[$i].Primary) { return $i } } }
@@ -264,9 +272,17 @@ if ($SharedIndex -lt 0) { Write-Host "SharedMonitor '$SharedMonitor' doesn't mat
 $shared = $mons[$SharedIndex]
 $other  = $mons | Where-Object { $_.HMon -ne $shared.HMon } | Select-Object -First 1   # $null on a single-monitor setup
 
-if ($To -eq 'Toggle') { $To = if ([AutoInputPS5]::GetInput($shared) -eq $Ps5Code) { 'PC' } else { 'PS5' } }
+# Toggle by our own mode (fence.txt exists = PS5 mode), not by asking the monitor: a monitor
+# showing an input with no signal (PS5 off) often jumps back to the PC by itself, and trusting
+# that would run "go to PS5" twice and overwrite the saved window positions.
+if ($To -eq 'Toggle') { $To = if (Test-Path $FenceFile) { 'PC' } else { 'PS5' } }
 
-if ($To -eq 'PS5') {
+if ($To -eq 'PS5' -and (Test-Path $FenceFile)) {
+    # Already in PS5 mode: keep the saved layout, just ask the monitor for the PS5 again.
+    [void][AutoInputPS5]::SetInput($shared, $Ps5Code)
+    Write-Host "Already in PS5 mode, switched the monitor to the PS5 again."
+}
+elseif ($To -eq 'PS5') {
     $p = New-Object AutoInputPS5+POINT; [void][AutoInputPS5]::GetCursorPos([ref]$p)
     Set-Content -Encoding ASCII $MouseFile "$($p.X),$($p.Y)"
     if ($other) {
